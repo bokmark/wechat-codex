@@ -6,7 +6,6 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const LABEL = "com.bokmark.wechat-codex";
-const REPOSITORY = "https://github.com/bokmark/wechat-codex.git";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(SCRIPT_DIR, "..");
 const HOME_DIR = os.homedir();
@@ -75,12 +74,11 @@ function run(program, args, options = {}) {
 }
 
 function sourceRoot() {
+  const bundled = path.join(PLUGIN_ROOT, "runtime");
+  if (fs.existsSync(path.join(bundled, "src", "cli.js"))) return bundled;
   const candidate = path.resolve(PLUGIN_ROOT, "..", "..");
   if (fs.existsSync(path.join(candidate, "src", "cli.js"))) return candidate;
-  const checkout = fs.mkdtempSync(path.join(os.tmpdir(), "wechat-codex-source-"));
-  run("git", ["clone", "--depth", "1", REPOSITORY, checkout], { stdio: "inherit" });
-  if (!fs.existsSync(path.join(checkout, "src", "cli.js"))) throw new Error("下载的项目缺少 src/cli.js");
-  return checkout;
+  throw new Error("插件安装包不完整，请在 Codex 插件页更新或重新安装 WeChat Codex");
 }
 
 function deployRuntime(source) {
@@ -102,7 +100,7 @@ function loadConfig() {
   try { return JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8")); }
   catch (error) {
     if (error.code === "ENOENT") return {};
-    throw error;
+    throw new Error(`已有配置无法读取，请让 Codex 帮你检查：${CONFIG_PATH}`);
   }
 }
 
@@ -117,6 +115,22 @@ function executableOnPath(name) {
   for (const directory of String(process.env.PATH || "").split(path.delimiter)) {
     if (!directory) continue;
     const candidate = path.join(directory, name);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return fs.realpathSync(candidate);
+    } catch {}
+  }
+  return null;
+}
+
+function resolveCodexExecutable(configured) {
+  const candidates = [
+    configured,
+    executableOnPath("codex"),
+    "/Applications/Codex.app/Contents/Resources/codex",
+    "/Applications/Codex.app/Contents/MacOS/codex",
+  ].filter(Boolean);
+  for (const candidate of candidates) {
     try {
       fs.accessSync(candidate, fs.constants.X_OK);
       return fs.realpathSync(candidate);
@@ -168,10 +182,25 @@ function writeLaunchAgent(codexPath) {
   fs.writeFileSync(PLIST_PATH, plist(process.execPath, codexPath), { mode: 0o600 });
 }
 
+function pause(milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
 function bootService() {
-  run("launchctl", ["bootout", serviceTarget()], { allowFailure: true });
-  run("launchctl", ["bootstrap", `gui/${process.getuid()}`, PLIST_PATH]);
-  run("launchctl", ["kickstart", "-k", serviceTarget()]);
+  if (serviceStatus().loaded) {
+    const restarted = run("launchctl", ["kickstart", "-k", serviceTarget()], { allowFailure: true });
+    if (restarted.status === 0 || serviceStatus().running) return;
+    const detail = String(restarted.stderr || restarted.stdout || "").trim();
+    throw new Error(`后台服务重启失败${detail ? `：${detail}` : ""}`);
+  }
+  let loaded;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if (attempt) pause(1_000);
+    loaded = run("launchctl", ["bootstrap", `gui/${process.getuid()}`, PLIST_PATH], { allowFailure: true });
+    if (serviceStatus().loaded) return;
+  }
+  const detail = String(loaded?.stderr || loaded?.stdout || "").trim();
+  throw new Error(`launchctl bootstrap 失败${detail ? `：${detail}` : ""}`);
 }
 
 function requireMac() {
@@ -201,7 +230,7 @@ function waitForService(timeoutMs = 8_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (serviceStatus().running) return true;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+    pause(250);
   }
   return false;
 }
@@ -218,8 +247,11 @@ function showLogs() {
 
 function loginIfNeeded(relogin) {
   const credentials = path.join(STATE_DIR, "credentials.json");
-  if (!relogin && fs.existsSync(credentials)) return;
-  console.log("需要完成一次微信授权。请打开稍后显示的链接并在微信中确认。");
+  if (!relogin && fs.existsSync(credentials)) {
+    console.log("[3/5] 已找到微信授权，将直接复用。");
+    return;
+  }
+  console.log("[3/5] 需要完成一次微信授权。请打开稍后显示的链接并在微信中确认。");
   const result = run(process.execPath, [path.join(RUNTIME_DIR, "src", "cli.js"), "login"], {
     cwd: RUNTIME_DIR,
     env: { ...process.env, WECHAT_CODEX_CONFIG: CONFIG_PATH, WECHAT_CODEX_STATE_DIR: STATE_DIR },
@@ -243,25 +275,31 @@ async function main() {
   if (command !== "install") throw new Error(`未知操作：${command}`);
 
   requireMac();
+  const nodeMajor = Number(process.versions.node.split(".")[0]);
+  if (nodeMajor < 18) throw new Error("当前运行环境过旧，请先更新 Codex 后重试");
   const selected = path.resolve(options.project || process.cwd());
   if (!fs.statSync(selected, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`项目目录不存在：${selected}`);
   if (selected === PLUGIN_ROOT || selected.startsWith(`${PLUGIN_ROOT}${path.sep}`)) {
     throw new Error("不能把插件缓存目录当作项目；请通过 --project 指定真实项目目录");
   }
 
+  console.log("[1/5] 正在检查插件和当前项目……");
   const source = sourceRoot();
+  console.log("[2/5] 正在部署本地桥接服务并自动生成配置……");
   deployRuntime(source);
   const { config, key } = mergeProjectConfig(loadConfig(), selected, options.name);
-  const codexPath = config.codexPath || executableOnPath("codex");
-  if (!codexPath) throw new Error("找不到 Codex CLI，请先在 Codex 中确认 CLI 已安装");
+  const codexPath = resolveCodexExecutable(config.codexPath);
+  if (!codexPath) throw new Error("找不到本机 Codex。请先安装或更新 Codex，再重新发送“连接我的微信”");
   config.codexPath = codexPath;
   saveConfig(config);
   loginIfNeeded(options.relogin);
+  console.log("[4/5] 正在设置登录 macOS 后自动启动……");
   writeLaunchAgent(codexPath);
   bootService();
   if (!waitForService() || !showStatus()) throw new Error("后台服务未能启动，请查看 logs");
+  console.log("[5/5] 正在完成健康检查……");
   console.log(`项目已加入监控：${key} (${selected})`);
-  console.log("安装完成。以后登录 macOS 时会自动启动，无需运行 npm 命令。");
+  console.log("安装完成。现在可以直接在微信发送 help；以后无需运行命令或编辑配置文件。");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

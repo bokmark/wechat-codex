@@ -42,6 +42,16 @@ test("a first message creates a task and a running follow-up steers it", async (
   assert.deepEqual(codex.steers[0], { threadId: "thread-1", turnId: "turn-1", text: "also test it" });
 });
 
+test("plain help returns a usage guide without creating a task", async () => {
+  const { controller, codex, store, sent } = setup();
+  await controller.handleIncoming({ message_id: 1, from_user_id: "owner", context_token: "ctx", item_list: [{ type: 1, text_item: { text: "help" } }] });
+  assert.equal(codex.turns.length, 0);
+  assert.equal(Object.keys(store.read().jobs).length, 0);
+  assert.match(sent.at(-1)[1], /微信 Codex 使用指引/);
+  assert.match(sent.at(-1)[1], /\/recent/);
+  assert.match(sent.at(-1)[1], /#2 继续完善错误处理/);
+});
+
 test("turn completion is pushed back to WeChat", async () => {
   const { controller, codex, store, sent } = setup();
   await controller.handleIncoming({ message_id: 1, from_user_id: "owner", context_token: "ctx", item_list: [{ type: 1, text_item: { text: "build it" } }] });
