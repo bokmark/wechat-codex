@@ -51,15 +51,30 @@ export function mergeProjectConfig(raw, selectedPath, requestedKey) {
   return { config, key };
 }
 
-function parseArgs(argv) {
+export function mergeProjectsConfig(raw, selections) {
+  let config = raw;
+  const projects = [];
+  const seen = new Set();
+  for (const selection of selections) {
+    const resolved = path.resolve(selection.path);
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    const merged = mergeProjectConfig(config, resolved, selection.name);
+    config = merged.config;
+    projects.push({ key: merged.key, path: resolved });
+  }
+  return { config, projects };
+}
+
+export function parseArgs(argv) {
   const command = argv[0] || "status";
-  const options = {};
+  const options = { projects: [], names: [] };
   for (let index = 1; index < argv.length; index += 1) {
     const value = argv[index];
     if (value === "--relogin") options.relogin = true;
     else if (value === "--project" || value === "--name") {
       if (!argv[index + 1]) throw new Error(`${value} 缺少参数`);
-      options[value.slice(2)] = argv[++index];
+      options[value === "--project" ? "projects" : "names"].push(argv[++index]);
     } else throw new Error(`未知参数：${value}`);
   }
   return { command, options };
@@ -277,17 +292,28 @@ async function main() {
   requireMac();
   const nodeMajor = Number(process.versions.node.split(".")[0]);
   if (nodeMajor < 18) throw new Error("当前运行环境过旧，请先更新 Codex 后重试");
-  const selected = path.resolve(options.project || process.cwd());
-  if (!fs.statSync(selected, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`项目目录不存在：${selected}`);
-  if (selected === PLUGIN_ROOT || selected.startsWith(`${PLUGIN_ROOT}${path.sep}`)) {
-    throw new Error("不能把插件缓存目录当作项目；请通过 --project 指定真实项目目录");
+  const selectedPaths = options.projects.length ? options.projects : [process.cwd()];
+  if (options.names.length && options.names.length !== selectedPaths.length) {
+    throw new Error("--name 的数量必须与 --project 一致");
+  }
+  const selections = selectedPaths.map((selectedPath, index) => ({
+    path: path.resolve(selectedPath),
+    name: options.names[index],
+  }));
+  for (const selection of selections) {
+    if (!fs.statSync(selection.path, { throwIfNoEntry: false })?.isDirectory()) {
+      throw new Error(`项目目录不存在：${selection.path}`);
+    }
+    if (selection.path === PLUGIN_ROOT || selection.path.startsWith(`${PLUGIN_ROOT}${path.sep}`)) {
+      throw new Error("不能把插件缓存目录当作项目；请通过 --project 指定真实项目目录");
+    }
   }
 
-  console.log("[1/5] 正在检查插件和当前项目……");
+  console.log(`[1/5] 正在检查插件和 ${selections.length} 个项目……`);
   const source = sourceRoot();
   console.log("[2/5] 正在部署本地桥接服务并自动生成配置……");
   deployRuntime(source);
-  const { config, key } = mergeProjectConfig(loadConfig(), selected, options.name);
+  const { config, projects } = mergeProjectsConfig(loadConfig(), selections);
   const codexPath = resolveCodexExecutable(config.codexPath);
   if (!codexPath) throw new Error("找不到本机 Codex。请先安装或更新 Codex，再重新发送“连接我的微信”");
   config.codexPath = codexPath;
@@ -298,7 +324,7 @@ async function main() {
   bootService();
   if (!waitForService() || !showStatus()) throw new Error("后台服务未能启动，请查看 logs");
   console.log("[5/5] 正在完成健康检查……");
-  console.log(`项目已加入监控：${key} (${selected})`);
+  for (const project of projects) console.log(`项目已加入监控：${project.key} (${project.path})`);
   console.log("安装完成。现在可以直接在微信发送 help；以后无需运行命令或编辑配置文件。");
 }
 

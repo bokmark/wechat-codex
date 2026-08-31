@@ -1,6 +1,6 @@
 {
   "name": "wechat-codex",
-  "version": "0.1.0+codex.20260831133816",
+  "version": "0.1.0+codex.20260831134518",
   "description": "Set up and manage a local WeChat bridge for Codex tasks and completion notifications.",
   "author": {
     "name": "bokmark",
