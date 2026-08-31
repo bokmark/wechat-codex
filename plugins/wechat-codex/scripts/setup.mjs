@@ -9,10 +9,21 @@ const LABEL = "com.bokmark.wechat-codex";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(SCRIPT_DIR, "..");
 const HOME_DIR = os.homedir();
-const RUNTIME_DIR = path.join(HOME_DIR, ".local", "share", "wechat-codex");
+export function runtimeDirFor(platform = process.platform, homeDir = HOME_DIR, env = process.env) {
+  if (platform === "win32") {
+    return path.join(env.LOCALAPPDATA || path.join(homeDir, "AppData", "Local"), "WeChatCodex");
+  }
+  return path.join(homeDir, ".local", "share", "wechat-codex");
+}
+
+const RUNTIME_DIR = runtimeDirFor();
 const STATE_DIR = path.join(HOME_DIR, ".wechat-codex");
 const CONFIG_PATH = path.join(STATE_DIR, "config.json");
 const PLIST_PATH = path.join(HOME_DIR, "Library", "LaunchAgents", `${LABEL}.plist`);
+const SYSTEMD_SERVICE = "wechat-codex.service";
+const SYSTEMD_PATH = path.join(HOME_DIR, ".config", "systemd", "user", SYSTEMD_SERVICE);
+const WINDOWS_TASK = "WeChat Codex";
+const WINDOWS_LAUNCHER_PATH = path.join(STATE_DIR, "start-service.ps1");
 
 export function xmlEscape(value) {
   return String(value)
@@ -21,6 +32,25 @@ export function xmlEscape(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&apos;");
+}
+
+export function systemdQuote(value) {
+  return `"${String(value)
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("%", "%%")
+    .replaceAll("\n", "\\n")}"`;
+}
+
+export function powershellQuote(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+export function platformLabel(platform = process.platform) {
+  if (platform === "darwin") return "macOS";
+  if (platform === "linux") return "Linux";
+  if (platform === "win32") return "Windows";
+  return platform;
 }
 
 export function projectKey(projectPath) {
@@ -107,8 +137,19 @@ function deployRuntime(source) {
   }
   if (!fs.existsSync(path.join(staging, "src", "cli.js"))) throw new Error("运行文件部署失败");
   fs.rmSync(previous, { recursive: true, force: true });
-  if (fs.existsSync(RUNTIME_DIR)) fs.renameSync(RUNTIME_DIR, previous);
-  fs.renameSync(staging, RUNTIME_DIR);
+  let movedPrevious = false;
+  try {
+    if (fs.existsSync(RUNTIME_DIR)) {
+      fs.renameSync(RUNTIME_DIR, previous);
+      movedPrevious = true;
+    }
+    fs.renameSync(staging, RUNTIME_DIR);
+  } catch (error) {
+    if (movedPrevious && !fs.existsSync(RUNTIME_DIR) && fs.existsSync(previous)) {
+      fs.renameSync(previous, RUNTIME_DIR);
+    }
+    throw error;
+  }
 }
 
 function loadConfig() {
@@ -126,14 +167,19 @@ function saveConfig(config) {
   fs.renameSync(temporary, CONFIG_PATH);
 }
 
-function executableOnPath(name) {
+function executableOnPath(name, platform = process.platform) {
+  const extensions = platform === "win32" && !path.extname(name)
+    ? [".exe", ".cmd", ".bat", ""]
+    : [""];
   for (const directory of String(process.env.PATH || "").split(path.delimiter)) {
     if (!directory) continue;
-    const candidate = path.join(directory, name);
-    try {
-      fs.accessSync(candidate, fs.constants.X_OK);
-      return fs.realpathSync(candidate);
-    } catch {}
+    for (const extension of extensions) {
+      const candidate = path.join(directory, `${name}${extension}`);
+      try {
+        fs.accessSync(candidate, platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
+        return fs.realpathSync(candidate);
+      } catch {}
+    }
   }
   return null;
 }
@@ -142,19 +188,24 @@ function resolveCodexExecutable(configured) {
   const candidates = [
     configured,
     executableOnPath("codex"),
-    "/Applications/Codex.app/Contents/Resources/codex",
-    "/Applications/Codex.app/Contents/MacOS/codex",
+    ...(process.platform === "darwin" ? [
+      "/Applications/Codex.app/Contents/Resources/codex",
+      "/Applications/Codex.app/Contents/MacOS/codex",
+    ] : []),
   ].filter(Boolean);
   for (const candidate of candidates) {
     try {
-      fs.accessSync(candidate, fs.constants.X_OK);
+      fs.accessSync(candidate, process.platform === "win32" ? fs.constants.F_OK : fs.constants.X_OK);
       return fs.realpathSync(candidate);
     } catch {}
   }
   return null;
 }
 
-function plist(nodePath, codexPath) {
+export function launchAgentPlist(nodePath, codexPath, locations = {}) {
+  const runtimeDir = locations.runtimeDir || RUNTIME_DIR;
+  const stateDir = locations.stateDir || STATE_DIR;
+  const configPath = locations.configPath || CONFIG_PATH;
   const launchPath = [...new Set([
     path.dirname(nodePath), path.dirname(codexPath), "/opt/homebrew/bin", "/usr/local/bin",
     "/usr/bin", "/bin", "/usr/sbin", "/sbin",
@@ -162,12 +213,12 @@ function plist(nodePath, codexPath) {
   const values = {
     label: LABEL,
     node: nodePath,
-    cli: path.join(RUNTIME_DIR, "src", "cli.js"),
-    cwd: RUNTIME_DIR,
-    config: CONFIG_PATH,
-    state: STATE_DIR,
-    stdout: path.join(STATE_DIR, "service.log"),
-    stderr: path.join(STATE_DIR, "service-error.log"),
+    cli: path.join(runtimeDir, "src", "cli.js"),
+    cwd: runtimeDir,
+    config: configPath,
+    state: stateDir,
+    stdout: path.join(stateDir, "service.log"),
+    stderr: path.join(stateDir, "service-error.log"),
     launchPath,
   };
   for (const [key, value] of Object.entries(values)) values[key] = xmlEscape(value);
@@ -190,21 +241,68 @@ function plist(nodePath, codexPath) {
 `;
 }
 
+export function systemdUnit(nodePath, locations = {}) {
+  const runtimeDir = locations.runtimeDir || RUNTIME_DIR;
+  const stateDir = locations.stateDir || STATE_DIR;
+  const configPath = locations.configPath || CONFIG_PATH;
+  const cliPath = path.join(runtimeDir, "src", "cli.js");
+  return `[Unit]
+Description=WeChat Codex bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${systemdQuote(runtimeDir)}
+Environment=${systemdQuote(`WECHAT_CODEX_CONFIG=${configPath}`)}
+Environment=${systemdQuote(`WECHAT_CODEX_STATE_DIR=${stateDir}`)}
+ExecStart=${systemdQuote(nodePath)} ${systemdQuote(cliPath)} start
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+`;
+}
+
+export function windowsLauncher(nodePath, locations = {}) {
+  const runtimeDir = locations.runtimeDir || RUNTIME_DIR;
+  const stateDir = locations.stateDir || STATE_DIR;
+  const configPath = locations.configPath || CONFIG_PATH;
+  return `$ErrorActionPreference = 'Stop'
+$env:WECHAT_CODEX_CONFIG = ${powershellQuote(configPath)}
+$env:WECHAT_CODEX_STATE_DIR = ${powershellQuote(stateDir)}
+Set-Location -LiteralPath ${powershellQuote(runtimeDir)}
+& ${powershellQuote(nodePath)} ${powershellQuote(path.join(runtimeDir, "src", "cli.js"))} 'start' 1>> ${powershellQuote(path.join(stateDir, "service.log"))} 2>> ${powershellQuote(path.join(stateDir, "service-error.log"))}
+exit $LASTEXITCODE
+`;
+}
+
 function serviceTarget() { return `gui/${process.getuid()}/${LABEL}`; }
 
 function writeLaunchAgent(codexPath) {
   fs.mkdirSync(path.dirname(PLIST_PATH), { recursive: true });
-  fs.writeFileSync(PLIST_PATH, plist(process.execPath, codexPath), { mode: 0o600 });
+  fs.writeFileSync(PLIST_PATH, launchAgentPlist(process.execPath, codexPath), { mode: 0o600 });
+}
+
+function writeSystemdService() {
+  fs.mkdirSync(path.dirname(SYSTEMD_PATH), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(SYSTEMD_PATH, systemdUnit(process.execPath), { mode: 0o600 });
+}
+
+function writeWindowsLauncher() {
+  fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(WINDOWS_LAUNCHER_PATH, windowsLauncher(process.execPath), { mode: 0o600 });
 }
 
 function pause(milliseconds) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 }
 
-function bootService() {
-  if (serviceStatus().loaded) {
+function bootDarwinService() {
+  if (darwinServiceStatus().loaded) {
     const restarted = run("launchctl", ["kickstart", "-k", serviceTarget()], { allowFailure: true });
-    if (restarted.status === 0 || serviceStatus().running) return;
+    if (restarted.status === 0 || darwinServiceStatus().running) return;
     const detail = String(restarted.stderr || restarted.stdout || "").trim();
     throw new Error(`后台服务重启失败${detail ? `：${detail}` : ""}`);
   }
@@ -212,25 +310,142 @@ function bootService() {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     if (attempt) pause(1_000);
     loaded = run("launchctl", ["bootstrap", `gui/${process.getuid()}`, PLIST_PATH], { allowFailure: true });
-    if (serviceStatus().loaded) return;
+    if (darwinServiceStatus().loaded) return;
   }
   const detail = String(loaded?.stderr || loaded?.stdout || "").trim();
   throw new Error(`launchctl bootstrap 失败${detail ? `：${detail}` : ""}`);
 }
 
-function requireMac() {
-  if (process.platform !== "darwin") throw new Error("自动后台服务目前只支持 macOS");
+function bootLinuxService() {
+  try {
+    run("systemctl", ["--user", "daemon-reload"]);
+    run("systemctl", ["--user", "enable", SYSTEMD_SERVICE]);
+    run("systemctl", ["--user", "restart", SYSTEMD_SERVICE]);
+  } catch (error) {
+    throw new Error(`Linux 后台服务启动失败，请确认当前用户可使用 systemd：${error.message}`);
+  }
 }
 
-function serviceStatus() {
+function resolvePowerShellExecutable() {
+  const candidates = [
+    executableOnPath("powershell"),
+    executableOnPath("pwsh"),
+    process.env.SystemRoot && path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      fs.accessSync(candidate, fs.constants.F_OK);
+      return fs.realpathSync(candidate);
+    } catch {}
+  }
+  throw new Error("找不到 Windows PowerShell");
+}
+
+function runPowerShell(script, options = {}) {
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  return run(resolvePowerShellExecutable(), [
+    "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded,
+  ], options);
+}
+
+export function windowsTaskScript(powerShellPath) {
+  const launcherArgs = `-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${WINDOWS_LAUNCHER_PATH}"`;
+  return `$ErrorActionPreference = 'Stop'
+$taskName = ${powershellQuote(WINDOWS_TASK)}
+$action = New-ScheduledTaskAction -Execute ${powershellQuote(powerShellPath)} -Argument ${powershellQuote(launcherArgs)} -WorkingDirectory ${powershellQuote(RUNTIME_DIR)}
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Seconds 0) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Description 'Local WeChat to Codex bridge' -Force | Out-Null
+$task = Get-ScheduledTask -TaskName $taskName
+if ($task.State -eq 'Running') {
+  Stop-ScheduledTask -TaskName $taskName
+  Start-Sleep -Milliseconds 300
+}
+Start-ScheduledTask -TaskName $taskName
+`;
+}
+
+function bootWindowsService() {
+  const powerShellPath = resolvePowerShellExecutable();
+  try {
+    runPowerShell(windowsTaskScript(powerShellPath));
+  } catch (error) {
+    throw new Error(`Windows 后台任务启动失败：${error.message}`);
+  }
+}
+
+function bootService() {
+  if (process.platform === "darwin") return bootDarwinService();
+  if (process.platform === "linux") return bootLinuxService();
+  if (process.platform === "win32") return bootWindowsService();
+  throw new Error(`暂不支持当前系统：${process.platform}`);
+}
+
+function writeServiceDefinition(codexPath) {
+  if (process.platform === "darwin") return writeLaunchAgent(codexPath);
+  if (process.platform === "linux") return writeSystemdService();
+  if (process.platform === "win32") return writeWindowsLauncher();
+  throw new Error(`暂不支持当前系统：${process.platform}`);
+}
+
+function serviceDefinitionExists() {
+  if (process.platform === "darwin") return fs.existsSync(PLIST_PATH);
+  if (process.platform === "linux") return fs.existsSync(SYSTEMD_PATH);
+  if (process.platform === "win32") return fs.existsSync(WINDOWS_LAUNCHER_PATH);
+  return false;
+}
+
+function darwinServiceStatus() {
   const result = run("launchctl", ["print", serviceTarget()], { allowFailure: true });
   if (result.status !== 0) return { loaded: false, running: false, state: "未载入" };
   const state = result.stdout.match(/\bstate = ([^\n]+)/)?.[1]?.trim() || "已载入";
   return { loaded: true, running: state === "running", state };
 }
 
+function linuxServiceStatus() {
+  const result = run("systemctl", ["--user", "is-active", SYSTEMD_SERVICE], { allowFailure: true });
+  const state = String(result.stdout || "").trim() || "inactive";
+  return { loaded: fs.existsSync(SYSTEMD_PATH), running: result.status === 0 && state === "active", state };
+}
+
+function windowsServiceStatus() {
+  const script = `$task = Get-ScheduledTask -TaskName ${powershellQuote(WINDOWS_TASK)} -ErrorAction SilentlyContinue
+if ($null -eq $task) { exit 3 }
+$task.State.ToString()
+`;
+  const result = runPowerShell(script, { allowFailure: true });
+  if (result.status !== 0) return { loaded: false, running: false, state: "未注册" };
+  const state = String(result.stdout || "").trim() || "已注册";
+  return { loaded: true, running: state.toLowerCase() === "running", state };
+}
+
+function stopWindowsServiceForUpdate() {
+  const script = `$task = Get-ScheduledTask -TaskName ${powershellQuote(WINDOWS_TASK)} -ErrorAction SilentlyContinue
+if ($null -ne $task -and $task.State -eq 'Running') {
+  Stop-ScheduledTask -TaskName ${powershellQuote(WINDOWS_TASK)}
+}
+`;
+  runPowerShell(script);
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (!windowsServiceStatus().running) return;
+    pause(200);
+  }
+  throw new Error("Windows 后台任务未能停止，无法安全更新运行文件");
+}
+
+function prepareRuntimeUpdate() {
+  if (process.platform === "win32") stopWindowsServiceForUpdate();
+}
+
+function serviceStatus() {
+  if (process.platform === "darwin") return darwinServiceStatus();
+  if (process.platform === "linux") return linuxServiceStatus();
+  if (process.platform === "win32") return windowsServiceStatus();
+  throw new Error(`暂不支持当前系统：${process.platform}`);
+}
+
 function showStatus() {
-  requireMac();
   const status = serviceStatus();
   if (!status.loaded) {
     console.log("WeChat Codex 后台服务尚未运行。");
@@ -251,6 +466,13 @@ function waitForService(timeoutMs = 8_000) {
 }
 
 function showLogs() {
+  if (process.platform === "linux") {
+    const journal = run("journalctl", ["--user", "-u", SYSTEMD_SERVICE, "-n", "80", "--no-pager"], { allowFailure: true });
+    if (journal.status === 0 && journal.stdout.trim()) {
+      console.log(journal.stdout.trimEnd());
+      return;
+    }
+  }
   const files = [path.join(STATE_DIR, "service.log"), path.join(STATE_DIR, "service-error.log")];
   for (const file of files) {
     console.log(`\n${file}`);
@@ -281,15 +503,16 @@ async function main() {
   if (command === "status") { showStatus(); return; }
   if (command === "logs") { showLogs(); return; }
   if (command === "restart") {
-    requireMac();
-    if (!fs.existsSync(PLIST_PATH)) throw new Error("服务尚未安装，请先运行 install");
+    if (!serviceDefinitionExists()) throw new Error("服务尚未安装，请先运行 install");
     bootService();
     if (!waitForService() || !showStatus()) throw new Error("后台服务未能启动，请查看 logs");
     return;
   }
   if (command !== "install") throw new Error(`未知操作：${command}`);
 
-  requireMac();
+  if (!["darwin", "linux", "win32"].includes(process.platform)) {
+    throw new Error(`暂不支持当前系统：${process.platform}`);
+  }
   const nodeMajor = Number(process.versions.node.split(".")[0]);
   if (nodeMajor < 18) throw new Error("当前运行环境过旧，请先更新 Codex 后重试");
   const selectedPaths = options.projects.length ? options.projects : [process.cwd()];
@@ -312,6 +535,7 @@ async function main() {
   console.log(`[1/5] 正在检查插件和 ${selections.length} 个项目……`);
   const source = sourceRoot();
   console.log("[2/5] 正在部署本地桥接服务并自动生成配置……");
+  prepareRuntimeUpdate();
   deployRuntime(source);
   const { config, projects } = mergeProjectsConfig(loadConfig(), selections);
   const codexPath = resolveCodexExecutable(config.codexPath);
@@ -319,8 +543,8 @@ async function main() {
   config.codexPath = codexPath;
   saveConfig(config);
   loginIfNeeded(options.relogin);
-  console.log("[4/5] 正在设置登录 macOS 后自动启动……");
-  writeLaunchAgent(codexPath);
+  console.log(`[4/5] 正在设置登录 ${platformLabel()} 后自动启动……`);
+  writeServiceDefinition(codexPath);
   bootService();
   if (!waitForService() || !showStatus()) throw new Error("后台服务未能启动，请查看 logs");
   console.log("[5/5] 正在完成健康检查……");

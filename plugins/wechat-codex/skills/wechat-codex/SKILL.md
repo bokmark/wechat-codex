@@ -13,7 +13,7 @@ Use the bundled `../../scripts/setup.mjs` helper for deterministic setup and ser
    - For the current project, resolve the current task's real project root automatically. Ask only when there is no project context or two plausible roots exist.
    - For all, multiple, or saved Codex projects, use Codex's project-list capability and select only projects on the current host that expose a real local directory. Do not scan the filesystem. If the user explicitly says all, include every eligible saved project. If they did not specify scope and more than one eligible project exists, show their names in plain language and ask whether to add all, only the current one, or selected projects.
    - Never choose this plugin's cache or marketplace checkout.
-2. Tell the user, in plain language, how many projects Codex will configure and that it will install or update a local auto-start service. Do not expose filesystem details unless they ask. Obtain any approval required by the host immediately before setup.
+2. Tell the user, in plain language, how many projects Codex will configure and that it will install or update a local auto-start service. The helper automatically uses a LaunchAgent on macOS, a user systemd service on Linux, or a current-user scheduled task on Windows. Do not expose filesystem details unless they ask. Obtain any approval required by the host immediately before setup.
 3. Run the helper yourself from the user's project directory, with a PTY because a new WeChat login may be needed:
 
    ```sh
@@ -37,4 +37,4 @@ node <plugin-root>/scripts/setup.mjs logs
 
 Use `status` before changing a working service. Use `restart` after a runtime update or when the user explicitly asks. Logs may contain task text; summarize only what is necessary and never expose secrets.
 
-The automated service installer currently supports macOS. On another operating system, explain the limitation without presenting manual developer steps as a foolproof installation.
+The automated installer supports macOS, Linux, and Windows. Linux requires an available `systemctl --user` session. Windows requires PowerShell and Task Scheduler, which are standard system components. If one of these host facilities is unavailable, report that concrete prerequisite instead of asking a nontechnical user to create service files manually.

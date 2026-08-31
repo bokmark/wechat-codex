@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import { spawn } from "node:child_process";
 import readline from "node:readline";
+import { codexProcessOptions } from "./process-options.js";
 
 export class CodexAppServerClient extends EventEmitter {
   constructor({ codexPath = "codex", logger, spawnFn = spawn } = {}) {
@@ -15,7 +16,10 @@ export class CodexAppServerClient extends EventEmitter {
 
   async start() {
     if (this.process) return;
-    const child = this.spawnFn(this.codexPath, ["app-server"], { stdio: ["pipe", "pipe", "pipe"] });
+    const child = this.spawnFn(this.codexPath, ["app-server"], {
+      stdio: ["pipe", "pipe", "pipe"],
+      ...codexProcessOptions(this.codexPath),
+    });
     this.process = child;
     readline.createInterface({ input: child.stdout }).on("line", (line) => this.#onLine(line));
     child.stderr.on("data", (data) => this.logger?.debug(`codex: ${String(data).trimEnd()}`));

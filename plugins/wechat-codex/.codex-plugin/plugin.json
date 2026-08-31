@@ -1,6 +1,6 @@
 {
   "name": "wechat-codex",
-  "version": "0.1.0+codex.20260831134518",
+  "version": "0.1.0+codex.20260831143807",
   "description": "Set up and manage a local WeChat bridge for Codex tasks and completion notifications.",
   "author": {
     "name": "bokmark",
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "WeChat Codex",
     "shortDescription": "One guided setup for WeChat control and Codex notifications.",
-    "longDescription": "A self-contained guided installer that configures the current project, connects a personal WeChat robot, starts the local bridge automatically, and delivers durable Codex task notifications without manual config editing.",
+    "longDescription": "A self-contained cross-platform installer for macOS, Linux, and Windows that configures local projects, connects a personal WeChat robot, starts the bridge automatically, and delivers durable Codex task notifications without manual config editing.",
     "developerName": "bokmark",
     "category": "Productivity",
     "capabilities": [

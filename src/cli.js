@@ -6,6 +6,7 @@ import { createLogger } from "./logger.js";
 import { JsonStore } from "./storage/json-store.js";
 import { loginWithQr } from "./weixin/login.js";
 import { BridgeService } from "./service.js";
+import { codexProcessOptions } from "./codex/process-options.js";
 
 const command = process.argv[2] || "start";
 const logger = createLogger();
@@ -23,7 +24,10 @@ async function main() {
 
   if (command === "doctor") {
     let healthy = true;
-    const version = spawnSync(config.codexPath, ["--version"], { encoding: "utf8" });
+    const version = spawnSync(config.codexPath, ["--version"], {
+      encoding: "utf8",
+      ...codexProcessOptions(config.codexPath),
+    });
     if (version.status === 0) logger.info(`Codex：${version.stdout.trim()}`);
     else { logger.error(`找不到 Codex：${version.stderr?.trim() || config.codexPath}`); healthy = false; }
     for (const [key, project] of Object.entries(config.projects)) {

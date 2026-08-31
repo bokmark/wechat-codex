@@ -13,5 +13,7 @@ test("JsonStore persists state and credentials", () => {
   const reopened = new JsonStore(dir);
   assert.equal(reopened.read().syncBuf, "next");
   assert.deepEqual(reopened.loadCredentials(), { token: "secret", userId: "owner" });
-  assert.equal(fs.statSync(reopened.credentialsPath).mode & 0o777, 0o600);
+  if (process.platform !== "win32") {
+    assert.equal(fs.statSync(reopened.credentialsPath).mode & 0o777, 0o600);
+  }
 });
