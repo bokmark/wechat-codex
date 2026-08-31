@@ -1,57 +1,92 @@
 # WeChat Codex
 
-通过微信 ClawBot 控制这台电脑上的 Codex。微信消息会进入本机 `codex app-server`；任务完成、失败或请求审批时，结果会主动发回微信。同一任务可以继续对话，也可以在多个任务之间切换。
+通过微信控制这台电脑上的 Codex，并在任务完成、失败或需要审批时收到通知。你可以在微信里新建任务、继续对话、切换项目和处理审批。
 
-## Codex 插件安装（推荐）
+## 30 秒开始
 
-本仓库同时是一个 Codex 插件市场。安装 `wechat-codex` 插件后，在新任务里说“连接我的微信”，Codex 会自动识别当前项目、生成配置、引导一次微信授权，并在 macOS 上安装自动启动的后台服务。若有多个项目，可以说“把我保存的所有项目连接到微信”或点名选择项目；Codex 会读取自己的项目列表并一次加入，原有配置不会被覆盖。插件内已包含完整运行程序，不需要 Git、`npm install`、`npm start`，也不需要手动编辑 JSON。
+准备好以下环境：
 
-非技术用户只需要确认一次系统操作，并在微信中确认一次授权。插件不能也不应该绕过这两项安全确认；其余运行文件部署、项目配置、后台启动、健康检查和后续更新全部由 Codex 完成。手动安装方式仅保留为开发和故障排查入口。
+- 已安装并登录 Codex CLI
+- Node.js 18 或更高版本
+- 可以使用微信 ClawBot 的微信账号
 
-## 安全边界
+### 方法一：直接让 Codex 安装（推荐）
 
-- 使用腾讯公开的微信 ClawBot/iLink 通道，不模拟个人微信客户端。
-- Codex 仍在本机运行，项目文件和登录态不会传给本项目的第三方服务器。
-- 默认只接受扫码登录者自己的消息。
-- 只允许 `read-only` 和 `workspace-write` 沙箱；项目配置不接受 `danger-full-access`。
-- 命令执行和文件变更可在微信中逐项审批。
+把下面这段话发送给 Codex：
 
-## 准备
+```text
+请从 GitHub marketplace bokmark/wechat-codex 安装 wechat-codex 插件。安装完成后告诉我新建一个任务，不要在当前任务里继续配置。
+```
 
-需要 Node.js 18+、已经安装并登录的 Codex CLI，以及能运行微信 ClawBot 的微信账号。
+插件安装完成后，**新建一个 Codex 任务**，再发送：
+
+```text
+连接我的微信，并监控当前项目。
+```
+
+如果希望同时监控多个项目，可以改成：
+
+```text
+连接我的微信，并把我保存的所有项目加入监控。
+```
+
+接下来只需要：
+
+1. 允许 Codex 安装或更新当前用户的后台服务。
+2. 打开 Codex 给出的微信授权链接，并在微信中确认。
+3. 给微信机器人发送 `help`。
+
+Codex 会自动选择当前项目、生成配置、部署完整运行程序、启动后台服务并检查运行状态。无需 clone 仓库、运行 `npm install`、执行 `npm start` 或手动编辑 JSON。
+
+### 方法二：手动安装插件
+
+如果你更习惯终端，只需运行：
 
 ```sh
-cp config.example.json config.json
+codex plugin marketplace add bokmark/wechat-codex --ref main
+codex plugin add wechat-codex@wechat-codex
 ```
 
-编辑 `config.json`，把项目路径换成这台电脑上的绝对路径。可以配置多个项目：
+然后新建 Codex 任务并发送：
 
-```json
-{
-  "defaultProject": "wechat-codex",
-  "projects": {
-    "wechat-codex": {
-      "path": "/Users/you/project/wechat-codex",
-      "sandbox": "workspace-write",
-      "approvalPolicy": "on-request"
-    }
-  }
-}
+```text
+连接我的微信，并监控当前项目。
 ```
 
-## 登录与启动
+更新插件时运行：
 
 ```sh
-npm run doctor
-npm run login
-npm start
+codex plugin marketplace upgrade wechat-codex
+codex plugin add wechat-codex@wechat-codex
 ```
 
-`npm run login` 会输出腾讯 iLink 登录地址。用微信打开并确认后，凭据会以仅当前系统用户可读的权限保存在 `~/.wechat-codex/credentials.json`。运行状态和任务映射保存在同目录的 `state.json`。
+更新后也应新建任务，让 Codex 加载新版技能。
 
-服务启动后，直接给机器人发送文字即可创建第一个 Codex 任务。
+## 常用的 Codex 提示词
 
-## 微信命令
+不需要记住服务命令，直接告诉 Codex 目标即可：
+
+```text
+检查微信 Codex 桥接服务是否正常。
+重启微信 Codex 桥接服务。
+把当前项目加入微信监控。
+把我保存的所有项目加入微信监控。
+查看微信 Codex 最近的必要日志，并说明问题原因。
+```
+
+添加新项目时，Codex 会保留已有项目和微信登录状态。遇到多个可能的项目时，它会先让你选择，不会扫描整台电脑猜测路径。
+
+## 微信里怎么用
+
+安装完成后，直接给机器人发送任务，例如：
+
+```text
+检查当前项目为什么测试失败
+修复登录页面的报错并补测试
+#2 继续处理刚才的代码审查问题
+```
+
+常用命令：
 
 ```text
 help          查看完整使用指引（也支持 /help、帮助）
@@ -68,50 +103,81 @@ help          查看完整使用指引（也支持 /help、帮助）
 /cancel      停止当前运行
 /approve A1  允许待审批操作
 /deny A1     拒绝待审批操作
-#2 继续补测试  直接给任务 #2 发消息
 ```
 
-直接回复文字会继续当前任务；如果任务仍在运行，这条消息会作为补充要求加入当前回合。任务完成后会自动推送最终回复。
+直接回复文字会继续当前任务。如果任务仍在运行，这条消息会作为补充要求加入当前回合；任务完成后，最终回复会自动发送到微信。
 
-### Desktop/CLI 完成推送
+## 支持平台
 
-桥接器默认每 15 秒只读检查配置项目下的 Desktop 和 CLI 任务。首次启动会建立历史基线，不会把旧任务结果全部发到微信；之后新出现的 `completed`、`failed` 和 `interrupted` 回合会自动推送最终回复。
+- macOS：使用当前用户的 LaunchAgent，登录系统后自动启动。
+- Linux：使用当前用户的 systemd 服务；需要可用的 `systemctl --user` 会话。
+- Windows：使用当前用户的任务计划程序；兼容 PATH 中的 `codex.exe`、`codex.cmd` 和 `codex.bat`。
 
-```json
-{
-  "externalMonitor": {
-    "enabled": true,
-    "intervalMs": 15000,
-    "maxThreads": 50,
-    "notifyInterrupted": true
-  }
-}
+安装器会自动选择后台服务方式，不需要用户判断系统类型。
+
+## 安全边界
+
+- 使用腾讯公开的微信 ClawBot/iLink 通道，不模拟个人微信客户端。
+- Codex 和项目文件仍在本机运行，本项目不运营中转服务器。
+- 微信登录凭据只保存在当前用户目录，并限制为当前系统用户读取。
+- 默认只接受扫码登录者自己的消息。
+- 项目只允许 `read-only` 和 `workspace-write` 沙箱，不接受 `danger-full-access`。
+- 命令执行和文件变更仍可在微信中逐项审批。
+- 插件不会绕过系统操作确认或微信首次授权。
+
+## Desktop/CLI 任务通知
+
+桥接器默认每 15 秒只读检查已配置项目下的 Desktop 和 CLI 任务。首次启动只建立历史基线，不会把旧结果全部发到微信；之后新出现的 `completed`、`failed` 和 `interrupted` 回合会自动通知。
+
+微信个人机器人没有可靠的消息已读回执，因此通知会进入持久化的未读收件箱：使用 `/unread M1` 查看，或使用 `/read M1`、`/read all` 标记已读。如果机器人还没收到过你的消息，通知会先排队，取得当前会话上下文后再补发。
+
+独立运行的微信桥接器可以发现 Desktop/CLI 保存的任务，但无法可靠读取另一个 App Server 进程的实时状态。为避免两个客户端同时修改同一对话：
+
+- `/active` 对 Desktop/CLI 任务显示“尚未收尾”，不会冒充精确实时状态。
+- `/recent` 为发现的任务分配 `C1`、`C2` 等编号。
+- `/use C1` 会创建独立微信分支，保留原历史但不修改 Desktop 原任务。
+
+## 开发者模式
+
+下面的方式只适合参与本项目开发或排查插件安装器本身。普通用户请使用前面的插件安装流程。
+
+```sh
+git clone https://github.com/bokmark/wechat-codex.git
+cd wechat-codex
+cp config.example.json config.json
 ```
 
-已通知的回合编号、未读收件箱和尚未发送的通知会持久化到 `~/.wechat-codex/state.json`。微信个人机器人通道不提供可靠的消息已读回执，因此这里采用显式已读：完成通知即进入未读收件箱；发送 `/unread M1` 查看详情，或用 `/read M1`、`/read all` 标记已读。如果机器人还没收到过你的微信消息，通知会先排队；取得当前 `context_token` 后自动补发。监控只读取任务历史，不会恢复、分叉或修改 Desktop/CLI 对话。
+Windows PowerShell 使用：
 
-### Desktop/CLI 任务边界
+```powershell
+Copy-Item config.example.json config.json
+```
 
-Codex App Server 的运行状态属于单个服务进程：独立启动的微信桥接器可以发现 Desktop/CLI 保存的任务，但不能可靠读取另一个 App Server 进程里的实时 `active` 状态。为避免两个客户端并发写同一条对话：
+编辑 `config.json`，为项目填写绝对路径，然后运行：
 
-- `/active` 把微信桥接器自身任务列为“确认正在运行”；对 Desktop/CLI，只显示最近检查到 `completedAt` 仍为空的“尚未收尾”回合，并明确提示它也可能是异常退出，不能冒充精确实时状态。
-- `/recent` 读取配置项目内最近的 Desktop/CLI 任务，并分配 `C1`、`C2` 等编号。
-- `/use C1` 使用 `thread/fork` 创建独立微信分支，保留原对话历史但不修改 Desktop 原任务。
+```sh
+npm run doctor
+npm run login
+npm start
+```
 
-这是有意的安全设计，不会根据文件更新时间猜测任务是否仍在运行。
+不要同时启动多个实例，否则多个长轮询进程会争用同一同步游标。
 
-## 验证
+运行测试：
 
 ```sh
 npm test
 npm run test:codex
 ```
 
-第一条只运行离线单元测试；第二条会真实启动本机 Codex App Server 并验证初始化，但不会创建任务或修改文件。
+`npm test` 是离线单元测试；`npm run test:codex` 会真实启动本机 Codex App Server 并验证初始化，但不会创建任务或修改项目文件。
 
-## 后台运行
+## 本地数据位置
 
-当前版本先以前台进程运行，便于观察首次接入。确认扫码和收发消息都正常后，可再用 macOS LaunchAgent、systemd 或进程管理器托管。不要同时启动多个实例，否则多个长轮询进程会争用同一同步游标。
+- 微信凭据：`~/.wechat-codex/credentials.json`
+- 项目配置：`~/.wechat-codex/config.json`
+- 任务映射与未读状态：`~/.wechat-codex/state.json`
+- 插件部署的稳定运行文件：`~/.local/share/wechat-codex`
 
 ## 协议来源
 
