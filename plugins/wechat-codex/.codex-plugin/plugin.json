@@ -1,0 +1,37 @@
+{
+  "name": "wechat-codex",
+  "version": "0.1.0+codex.20260831112446",
+  "description": "Set up and manage a local WeChat bridge for Codex tasks and completion notifications.",
+  "author": {
+    "name": "bokmark",
+    "url": "https://github.com/bokmark"
+  },
+  "homepage": "https://github.com/bokmark/wechat-codex",
+  "repository": "https://github.com/bokmark/wechat-codex",
+  "license": "MIT",
+  "keywords": [
+    "wechat",
+    "codex",
+    "notifications",
+    "automation"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "WeChat Codex",
+    "shortDescription": "Control Codex from WeChat and receive task notifications.",
+    "longDescription": "Connect a personal WeChat robot to local Codex tasks, continue conversations remotely, and receive durable completion notifications.",
+    "developerName": "bokmark",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Automation"
+    ],
+    "websiteURL": "https://github.com/bokmark/wechat-codex",
+    "defaultPrompt": [
+      "\u8fde\u63a5\u6211\u7684\u5fae\u4fe1\uff0c\u8ba9 Codex \u4efb\u52a1\u5b8c\u6210\u540e\u81ea\u52a8\u901a\u77e5\u6211\u3002",
+      "\u68c0\u67e5\u5fae\u4fe1 Codex \u6865\u63a5\u670d\u52a1\u662f\u5426\u6b63\u5e38\u8fd0\u884c\u3002",
+      "\u628a\u5f53\u524d\u9879\u76ee\u52a0\u5165\u5fae\u4fe1 Codex \u7684\u76d1\u63a7\u5217\u8868\u3002"
+    ],
+    "brandColor": "#07C160"
+  }
+}

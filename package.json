@@ -1,0 +1,18 @@
+{
+  "name": "wechat-codex",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Control local Codex conversations from WeChat ClawBot.",
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "start": "node src/cli.js start",
+    "login": "node src/cli.js login",
+    "doctor": "node src/cli.js doctor",
+    "test": "node --test",
+    "test:codex": "node scripts/smoke-codex.js"
+  },
+  "license": "MIT"
+}

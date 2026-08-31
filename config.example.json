@@ -1,0 +1,23 @@
+{
+  "defaultProject": "wechat-codex",
+  "projects": {
+    "wechat-codex": {
+      "path": "/absolute/path/to/wechat-codex",
+      "sandbox": "workspace-write",
+      "approvalPolicy": "on-request"
+    }
+  },
+  "wechat": {
+    "pollTimeoutMs": 35000,
+    "sendAcknowledgement": true
+  },
+  "externalMonitor": {
+    "enabled": true,
+    "intervalMs": 15000,
+    "maxThreads": 50,
+    "notifyInterrupted": true
+  },
+  "security": {
+    "ownerOnly": true
+  }
+}

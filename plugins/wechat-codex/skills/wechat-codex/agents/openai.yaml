@@ -1,0 +1,6 @@
+interface:
+  display_name: "WeChat Codex"
+  short_description: "配置微信远程控制和 Codex 任务完成通知服务"
+  default_prompt: "Use $wechat-codex to connect my WeChat and enable Codex task notifications."
+policy:
+  allow_implicit_invocation: true
