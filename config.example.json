@@ -9,7 +9,12 @@
   },
   "wechat": {
     "pollTimeoutMs": 35000,
-    "sendAcknowledgement": true
+    "sendAcknowledgement": true,
+    "attachments": {
+      "enabled": true,
+      "maxFiles": 5,
+      "maxFileBytes": 20971520
+    }
   },
   "externalMonitor": {
     "enabled": true,

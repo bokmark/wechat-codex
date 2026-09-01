@@ -23,14 +23,20 @@ export class BridgeService {
     this.store = store;
     this.logger = logger;
     this.codex = codex || new CodexAppServerClient({ codexPath: config.codexPath, logger });
-    this.weixin = weixin || new WeixinClient({ baseUrl: credentials.baseUrl, token: credentials.token });
+    this.weixin = weixin || new WeixinClient({
+      baseUrl: credentials.baseUrl,
+      cdnBaseUrl: credentials.cdnBaseUrl,
+      token: credentials.token,
+    });
     this.controller = new TaskController({
       config, credentials, store, codex: this.codex, logger,
       sendText: (...args) => this.weixin.sendText(...args),
+      sendMedia: (...args) => this.weixin.sendMedia(...args),
     });
     this.externalMonitor = new ExternalTaskMonitor({
       config, credentials, store, codex: this.codex, logger,
       sendText: (...args) => this.weixin.sendText(...args),
+      sendMedia: (...args) => this.weixin.sendMedia(...args),
     });
   }
 

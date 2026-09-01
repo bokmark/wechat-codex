@@ -1,4 +1,5 @@
 import { markInboxSent, recordInbox } from "./inbox.js";
+import { attachmentCandidates, resolveAttachments } from "./attachments.js";
 
 const MAX_MESSAGE_LENGTH = 1800;
 const MAX_NOTIFIED_TURNS = 2000;
@@ -42,12 +43,13 @@ function statusLabel(status) {
 }
 
 export class ExternalTaskMonitor {
-  constructor({ config, credentials, store, codex, sendText, logger }) {
+  constructor({ config, credentials, store, codex, sendText, sendMedia, logger }) {
     this.config = config;
     this.credentials = credentials;
     this.store = store;
     this.codex = codex;
     this.sendText = sendText;
+    this.sendMedia = sendMedia;
     this.logger = logger;
   }
 
@@ -147,7 +149,19 @@ export class ExternalTaskMonitor {
     this.store.update((state) => {
       const monitor = this.#ensureState(state);
       if (monitor.pendingNotifications.some((item) => item.key === key) || monitor.notifiedTurnIds.includes(turn.id)) return;
-      monitor.pendingNotifications.push({ key, threadId: thread.id, turnId: turn.id, text, createdAt: new Date().toISOString() });
+      monitor.pendingNotifications.push({
+        key,
+        threadId: thread.id,
+        turnId: turn.id,
+        projectKey,
+        text,
+        textSent: false,
+        attachments: turn.status === "completed" ? attachmentCandidates(turn.items) : [],
+        sentAttachmentPaths: [],
+        attachmentAttempts: {},
+        attachmentWarningSent: false,
+        createdAt: new Date().toISOString(),
+      });
       recordInbox(state, {
         key,
         userId: this.credentials.userId,
@@ -169,7 +183,51 @@ export class ExternalTaskMonitor {
     if (!token) return;
     for (const item of this.#monitorState().pendingNotifications) {
       try {
-        await this.#send(userId, item.text, token);
+        if (!item.textSent) {
+          await this.#send(userId, item.text, token);
+          this.store.update((state) => {
+            const pending = this.#ensureState(state).pendingNotifications.find((candidate) => candidate.key === item.key);
+            if (pending) pending.textSent = true;
+          });
+        }
+        const omitted = [];
+        const options = this.config.wechat?.attachments;
+        if (this.sendMedia && options?.enabled !== false && item.attachments?.length) {
+          const project = this.config.projects[item.projectKey];
+          const resolved = project
+            ? await resolveAttachments(item.attachments, project.path, options)
+            : { attachments: [], skipped: item.attachments.map((candidate) => ({ path: candidate.path, reason: "项目配置已不存在" })) };
+          omitted.push(...resolved.skipped);
+          for (const attachment of resolved.attachments) {
+            const latest = this.#monitorState().pendingNotifications.find((candidate) => candidate.key === item.key);
+            if (latest?.sentAttachmentPaths?.includes(attachment.path)) continue;
+            try {
+              await this.sendMedia(userId, attachment.path, token, attachment.kind);
+              this.store.update((state) => {
+                const pending = this.#ensureState(state).pendingNotifications.find((candidate) => candidate.key === item.key);
+                if (pending && !pending.sentAttachmentPaths.includes(attachment.path)) pending.sentAttachmentPaths.push(attachment.path);
+              });
+            } catch (error) {
+              const attempts = this.store.update((state) => {
+                const pending = this.#ensureState(state).pendingNotifications.find((candidate) => candidate.key === item.key);
+                if (!pending) return 3;
+                pending.attachmentAttempts ||= {};
+                pending.attachmentAttempts[attachment.path] = (pending.attachmentAttempts[attachment.path] || 0) + 1;
+                return pending.attachmentAttempts[attachment.path];
+              });
+              if (attempts < 3) throw error;
+              omitted.push({ path: attachment.name, reason: error.message });
+            }
+          }
+        }
+        if (omitted.length && !item.attachmentWarningSent) {
+          const lines = omitted.slice(0, 10).map((entry) => `• ${String(entry.path).split(/[\\/]/).at(-1)}：${entry.reason}`);
+          await this.#send(userId, `以下附件未发送：\n${lines.join("\n")}`, token);
+          this.store.update((state) => {
+            const pending = this.#ensureState(state).pendingNotifications.find((candidate) => candidate.key === item.key);
+            if (pending) pending.attachmentWarningSent = true;
+          });
+        }
         this.store.update((state) => {
           const monitor = this.#ensureState(state);
           monitor.pendingNotifications = monitor.pendingNotifications.filter((pending) => pending.key !== item.key);

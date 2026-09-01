@@ -76,6 +76,7 @@ export function mergeProjectConfig(raw, selectedPath, requestedKey) {
   };
   config.defaultProject ||= key;
   config.wechat ||= { pollTimeoutMs: 35_000, sendAcknowledgement: true };
+  config.wechat.attachments ||= { enabled: true, maxFiles: 5, maxFileBytes: 20 * 1024 * 1024 };
   config.externalMonitor ||= { enabled: true, intervalMs: 15_000, maxThreads: 50, notifyInterrupted: true };
   config.security ||= { ownerOnly: true };
   return { config, key };

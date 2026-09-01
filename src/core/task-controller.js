@@ -1,4 +1,5 @@
 import { markInboxRead, markInboxSent, recordInbox, unreadInbox } from "./inbox.js";
+import { attachmentCandidates, mergeAttachmentCandidates, resolveAttachments } from "./attachments.js";
 
 const HELP = `微信 Codex 使用指引
 
@@ -18,6 +19,8 @@ const HELP = `微信 Codex 使用指引
 /unread      查看未读完成消息
 /unread M1   查看消息并标记已读
 /read all    全部标记已读
+
+任务完成时，本轮新增的图片会作为图片发送，其他新增文件会作为附件发送。
 
 5. 管理当前任务
 /new [项目]  准备新任务
@@ -50,12 +53,13 @@ function extractText(message) {
 }
 
 export class TaskController {
-  constructor({ config, credentials, store, codex, sendText, logger }) {
+  constructor({ config, credentials, store, codex, sendText, sendMedia, logger }) {
     this.config = config;
     this.credentials = credentials;
     this.store = store;
     this.codex = codex;
     this.sendText = sendText;
+    this.sendMedia = sendMedia;
     this.logger = logger;
     this.loadedThreads = new Set();
     this.pendingApprovals = new Map();
@@ -172,6 +176,7 @@ export class TaskController {
         state.jobs[String(id)] = {
           id, userId, projectKey, threadId, turnId: null, status: "ready",
           title: prompt.replace(/\s+/g, " ").slice(0, 42), lastPrompt: "", finalResponse: "", error: "",
+          attachmentCandidates: [],
           createdAt: now(), updatedAt: now(),
         };
         state.sessions[userId] = { activeJobId: id, projectKey };
@@ -203,6 +208,7 @@ export class TaskController {
       saved.lastPrompt = prompt;
       saved.finalResponse = "";
       saved.error = "";
+      saved.attachmentCandidates = [];
       saved.updatedAt = now();
       state.sessions[userId].activeJobId = job.id;
     });
@@ -351,7 +357,7 @@ export class TaskController {
         id, userId, projectKey: external.projectKey, threadId: forked.thread.id,
         sourceThreadId: external.threadId, externalAlias: alias,
         turnId: null, status: "ready", title: external.title,
-        lastPrompt: "", finalResponse: "", error: "", createdAt: now(), updatedAt: now(),
+        lastPrompt: "", finalResponse: "", error: "", attachmentCandidates: [], createdAt: now(), updatedAt: now(),
       };
       draft.sessions[userId] = { activeJobId: id, projectKey: external.projectKey };
     });
@@ -415,11 +421,27 @@ export class TaskController {
           state.jobs[String(job.id)].updatedAt = now();
         });
       }
+      if (method === "item/completed" && ["fileChange", "imageGeneration"].includes(params.item?.type)) {
+        const job = this.#jobByThread(params.threadId);
+        if (job && (!job.turnId || !params.turnId || params.turnId === job.turnId)) {
+          const candidates = attachmentCandidates([params.item]);
+          if (candidates.length) this.store.update((state) => {
+            const saved = state.jobs[String(job.id)];
+            saved.attachmentCandidates = mergeAttachmentCandidates(saved.attachmentCandidates || [], candidates);
+            saved.updatedAt = now();
+          });
+        }
+      }
       if (method !== "turn/completed") return;
       const job = this.#jobByThread(params.threadId);
       if (!job || (job.turnId && params.turn?.id !== job.turnId)) return;
       const status = turnStatus(params.turn?.status);
-      let finalResponse = this.store.read().jobs[String(job.id)]?.finalResponse || "";
+      const savedJob = this.store.read().jobs[String(job.id)] || job;
+      let finalResponse = savedJob.finalResponse || "";
+      const candidates = mergeAttachmentCandidates(
+        savedJob.attachmentCandidates || [],
+        attachmentCandidates(params.turn?.items || []),
+      );
       for (const item of params.turn?.items || []) {
         if (item.type === "agentMessage" && item.phase !== "commentary") finalResponse = item.text || finalResponse;
       }
@@ -429,6 +451,7 @@ export class TaskController {
         saved.status = status;
         saved.finalResponse = finalResponse;
         saved.error = typeof error === "string" ? error : JSON.stringify(error);
+        saved.attachmentCandidates = [];
         saved.updatedAt = now();
       });
       const prefix = status === "completed" ? `任务 #${job.id} 已完成` : status === "interrupted" ? `任务 #${job.id} 已停止` : `任务 #${job.id} 失败`;
@@ -444,6 +467,7 @@ export class TaskController {
       });
       await this.#send(job.userId, body);
       this.store.update((state) => { markInboxSent(state, inboxKey); });
+      if (status === "completed") await this.#sendAttachments(job.userId, job.projectKey, candidates);
     } catch (error) {
       this.logger?.error("Codex notification handling failed", error);
     }
@@ -484,6 +508,36 @@ export class TaskController {
     }
     if (remaining) chunks.push(remaining);
     for (const chunk of chunks) await this.sendText(userId, chunk, token);
+  }
+
+  async #sendAttachments(userId, projectKey, candidates) {
+    const options = this.config.wechat?.attachments;
+    if (!this.sendMedia || options?.enabled === false || !candidates.length) return;
+    const project = this.config.projects[projectKey];
+    if (!project) return;
+    let resolved;
+    try {
+      resolved = await resolveAttachments(candidates, project.path, options);
+    } catch (error) {
+      this.logger?.warn("任务附件检查失败", error.message);
+      await this.#send(userId, `附件未发送：${error.message}`);
+      return;
+    }
+    const token = this.store.read().contextTokens[userId] || "";
+    const failed = [];
+    for (const attachment of resolved.attachments) {
+      try {
+        await this.sendMedia(userId, attachment.path, token, attachment.kind);
+      } catch (error) {
+        this.logger?.warn(`附件发送失败：${attachment.name}`, error.message);
+        failed.push({ path: attachment.name, reason: error.message });
+      }
+    }
+    const omitted = [...resolved.skipped, ...failed];
+    if (omitted.length) {
+      const lines = omitted.slice(0, 10).map((item) => `• ${String(item.path).split(/[\\/]/).at(-1)}：${item.reason}`);
+      await this.#send(userId, `以下附件未发送：\n${lines.join("\n")}`);
+    }
   }
 }
 

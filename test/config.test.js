@@ -29,4 +29,7 @@ test("loadConfig enables external completion monitoring by default", () => {
   assert.equal(config.externalMonitor.enabled, true);
   assert.equal(config.externalMonitor.intervalMs, 15_000);
   assert.equal(config.externalMonitor.maxThreads, 50);
+  assert.equal(config.wechat.attachments.enabled, true);
+  assert.equal(config.wechat.attachments.maxFiles, 5);
+  assert.equal(config.wechat.attachments.maxFileBytes, 20 * 1024 * 1024);
 });

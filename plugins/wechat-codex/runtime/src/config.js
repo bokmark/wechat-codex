@@ -53,6 +53,11 @@ export function loadConfig(configPath = process.env.WECHAT_CODEX_CONFIG || path.
     wechat: {
       pollTimeoutMs: Number(raw.wechat?.pollTimeoutMs ?? 35_000),
       sendAcknowledgement: raw.wechat?.sendAcknowledgement !== false,
+      attachments: {
+        enabled: raw.wechat?.attachments?.enabled !== false,
+        maxFiles: Math.max(1, Math.min(10, Number(raw.wechat?.attachments?.maxFiles ?? 5))),
+        maxFileBytes: Math.max(1024, Math.min(100 * 1024 * 1024, Number(raw.wechat?.attachments?.maxFileBytes ?? 20 * 1024 * 1024))),
+      },
     },
     externalMonitor: {
       enabled: raw.externalMonitor?.enabled !== false,

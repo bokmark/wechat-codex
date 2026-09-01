@@ -25,6 +25,8 @@ Use the bundled `../../scripts/setup.mjs` helper for deterministic setup and ser
 
 Running `install` again safely updates the stable runtime and adds every selected project without erasing existing projects or credentials. Repeated paths are ignored. Never instruct the user to edit `config.json`; rerun setup once with one or more new projects whenever their saved project list changes.
 
+Completed turns automatically send newly added project files after the text result. Supported image files are sent as images and other files as attachments; the runtime enforces its project-boundary, sensitive-file, count, and size checks.
+
 ## Service operations
 
 Use one of:

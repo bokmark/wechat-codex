@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import path from "node:path";
+import { WEIXIN_CDN_BASE_URL, uploadMedia } from "./media.js";
 
 export const WEIXIN_LOGIN_BASE_URL = "https://ilinkai.weixin.qq.com";
 
@@ -12,8 +14,9 @@ function randomUin() {
 }
 
 export class WeixinClient {
-  constructor({ baseUrl = WEIXIN_LOGIN_BASE_URL, token = "", version = "0.1.0", fetchFn = globalThis.fetch } = {}) {
+  constructor({ baseUrl = WEIXIN_LOGIN_BASE_URL, cdnBaseUrl = WEIXIN_CDN_BASE_URL, token = "", version = "0.1.0", fetchFn = globalThis.fetch } = {}) {
     this.baseUrl = baseUrl.replace(/\/$/, "");
+    this.cdnBaseUrl = cdnBaseUrl.replace(/\/$/, "");
     this.token = token;
     this.version = version;
     this.fetch = fetchFn;
@@ -79,6 +82,39 @@ export class WeixinClient {
           message_type: 2,
           message_state: 2,
           item_list: [{ type: 1, text_item: { text } }],
+          context_token: contextToken || "",
+          ...(runId ? { run_id: runId } : {}),
+        },
+      },
+    });
+  }
+
+  async sendMedia(toUserId, filePath, contextToken, kind = "file", runId) {
+    const uploaded = await uploadMedia({
+      filePath,
+      toUserId,
+      kind,
+      cdnBaseUrl: this.cdnBaseUrl,
+      fetchFn: this.fetch,
+      requestUploadUrl: (body) => this.request("ilink/bot/getuploadurl", { body }),
+    });
+    const media = {
+      encrypt_query_param: uploaded.downloadParam,
+      aes_key: Buffer.from(uploaded.aesKeyHex).toString("base64"),
+      encrypt_type: 1,
+    };
+    const item = kind === "image"
+      ? { type: 2, image_item: { media, aeskey: uploaded.aesKeyHex, mid_size: uploaded.ciphertextSize } }
+      : { type: 4, file_item: { media, file_name: path.basename(filePath), md5: uploaded.rawMd5, len: String(uploaded.fileSize) } };
+    return this.request("ilink/bot/sendmessage", {
+      body: {
+        msg: {
+          from_user_id: "",
+          to_user_id: toUserId,
+          client_id: crypto.randomUUID(),
+          message_type: 2,
+          message_state: 2,
+          item_list: [item],
           context_token: contextToken || "",
           ...(runId ? { run_id: runId } : {}),
         },

@@ -117,7 +117,14 @@ test("plugin setup names all supported platforms", () => {
 });
 
 test("plugin contains a self-contained runtime synchronized with the project", () => {
-  const files = ["package.json", "src/cli.js", "src/core/task-controller.js", "src/weixin/client.js"];
+  const files = [
+    "package.json",
+    "src/cli.js",
+    "src/core/attachments.js",
+    "src/core/task-controller.js",
+    "src/weixin/client.js",
+    "src/weixin/media.js",
+  ];
   for (const file of files) {
     const source = fs.readFileSync(path.join(root, file), "utf8");
     const bundled = fs.readFileSync(path.join(root, "plugins", "wechat-codex", "runtime", file), "utf8");

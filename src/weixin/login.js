@@ -1,6 +1,7 @@
 import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { WEIXIN_LOGIN_BASE_URL, WeixinClient } from "./client.js";
+import { WEIXIN_CDN_BASE_URL } from "./media.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -50,6 +51,7 @@ export async function loginWithQr({ store, logger, fetchFn = globalThis.fetch })
           accountId: field(status, "ilink_bot_id", "bot_id"),
           userId: field(status, "ilink_user_id", "user_id"),
           baseUrl: field(status, "baseurl", "base_url") || WEIXIN_LOGIN_BASE_URL,
+          cdnBaseUrl: field(status, "cdn_baseurl", "cdn_base_url") || WEIXIN_CDN_BASE_URL,
           savedAt: new Date().toISOString(),
         };
         if (!credentials.token || !credentials.userId) throw new Error("WeChat confirmed login but omitted credentials");

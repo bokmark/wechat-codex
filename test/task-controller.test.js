@@ -19,18 +19,27 @@ class FakeCodex extends EventEmitter {
   respond() {}
 }
 
-function setup() {
+function setup({ projectPath = "/tmp/demo" } = {}) {
   const store = new JsonStore(fs.mkdtempSync(path.join(os.tmpdir(), "wechat-codex-controller-")));
   const codex = new FakeCodex();
   const sent = [];
+  const media = [];
   const config = {
     defaultProject: "demo",
-    projects: { demo: { path: "/tmp/demo", sandbox: "workspace-write", approvalPolicy: "on-request" } },
-    security: { ownerOnly: true }, wechat: { sendAcknowledgement: true },
+    projects: { demo: { path: projectPath, sandbox: "workspace-write", approvalPolicy: "on-request" } },
+    security: { ownerOnly: true },
+    wechat: { sendAcknowledgement: true, attachments: { enabled: true, maxFiles: 5, maxFileBytes: 20 * 1024 * 1024 } },
   };
-  const controller = new TaskController({ config, credentials: { userId: "owner" }, store, codex, sendText: async (...args) => sent.push(args) });
+  const controller = new TaskController({
+    config,
+    credentials: { userId: "owner" },
+    store,
+    codex,
+    sendText: async (...args) => sent.push(args),
+    sendMedia: async (...args) => media.push(args),
+  });
   controller.start();
-  return { controller, codex, store, sent };
+  return { controller, codex, store, sent, media };
 }
 
 test("a first message creates a task and a running follow-up steers it", async () => {
@@ -62,6 +71,39 @@ test("turn completion is pushed back to WeChat", async () => {
   assert.match(sent.at(-1)[1], /done/);
   assert.equal(store.read().inbox.length, 1);
   assert.equal(store.read().inbox[0].readAt, null);
+});
+
+test("turn completion sends newly added images and files as WeChat media", async () => {
+  const projectPath = fs.mkdtempSync(path.join(os.tmpdir(), "wechat-codex-controller-project-"));
+  fs.writeFileSync(path.join(projectPath, "preview.png"), "image");
+  fs.writeFileSync(path.join(projectPath, "report.txt"), "report");
+  const { controller, codex, media } = setup({ projectPath });
+  await controller.handleIncoming({ message_id: 1, from_user_id: "owner", context_token: "ctx", item_list: [{ type: 1, text_item: { text: "build it" } }] });
+  codex.emit("notification", "item/completed", {
+    threadId: "thread-1",
+    turnId: "turn-1",
+    item: {
+      type: "fileChange",
+      status: "completed",
+      changes: [
+        { path: "preview.png", kind: { type: "add" } },
+        { path: "report.txt", kind: { type: "add" } },
+        { path: "existing.txt", kind: { type: "update" } },
+      ],
+    },
+  });
+  codex.emit("notification", "turn/completed", {
+    threadId: "thread-1",
+    turn: { id: "turn-1", status: "completed", items: [{ type: "agentMessage", phase: "final_answer", text: "done" }] },
+  });
+
+  for (let attempts = 0; attempts < 20 && media.length < 2; attempts += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.deepEqual(media.map((args) => [path.basename(args[1]), args[3]]), [
+    ["preview.png", "image"],
+    ["report.txt", "file"],
+  ]);
 });
 
 test("unread completion messages can be listed, opened, and marked read", async () => {
